@@ -7,13 +7,34 @@ const char* ssid = "NOMBRE_WIFI";
 const char* password = "CLAVe_WIFI";
 
 // Configuración de pines
-const int servoPin1 = 14;
-const int motorPin = 27;
 const int ledPin = 2;
 
-Servo servo1;
+const int servoPin1 = 23;
+const int servoPin2 = 22;
+const int servoPin3 = 1;
+const int servoPin4 = 3;
 
-bool listening = true;
+// Motor A
+int motor1Pin1 = 32; 
+int motor1Pin2 = 33; 
+int motor1EnablePin = 25;
+int motor1PwmChannel = 0; 
+
+// Motor B
+int motor2Pin1 = 26; 
+int motor2Pin2 = 27; 
+int motor2EnablePin = 14;
+int motor2PwmChannel = 1; 
+
+// Configuración de PWM
+const int freq = 30000;
+const int resolution = 8;
+int dutyCycle = 210;
+
+Servo servo1;
+Servo servo2;
+Servo servo3;
+Servo servo4;
 
 // Inicialización del servidor WebSocket en el puerto 81
 WebSocketsServer webSocket(81);
@@ -30,59 +51,45 @@ void handleCommand(String command) {
 
   if (hwIndex != -1) hw = command.substring(hwIndex + 3, command.indexOf("&", hwIndex + 3));
   if (idIndex != -1) id = command.substring(idIndex + 3, command.indexOf("&", idIndex + 3));
-  if (atIndex != -1) action = command.substring(atIndex + 3, command.length());
+  if (atIndex != -1) action = command.substring(atIndex + 3);
 
-  Serial.println("cmd-"+hw+"-id-"+id+"-at-"+action);
+  Serial.println("cmd-" + hw + "-id-" + id + "-at-" + action);
 
-  // Si el ESP32 está en modo de escucha, procesamos los comandos
-  if (listening) {
-    if (hw == "srv") {
+  if (hw == "srv") {
+    int grado = action.toInt();  
+    if (grado >= 0 && grado <= 180) {
       if (id == "01") {
-        // Convertir la accion (que es un string) a un entero (grados)
-        int grado = action.toInt();  
-        if (grado >= 0 && grado <= 180) {
-          servo1.write(grado);
-          Serial.print("Servo 1 movido a: ");
-          Serial.println(grado);
-        } else {
-          Serial.println("Grado fuera de rango (0-180)");
-        }      
+        servo1.write(grado);
+        Serial.print("Servo 1 movido a: ");
       } else if (id == "02") {
-        // Convertir la accion (que es un string) a un entero (grados)
-        int grado = action.toInt();  
-        if (grado >= 0 && grado <= 180) {
-          servo1.write(grado);
-          Serial.print("Servo 1 movido a: ");
-          Serial.println(grado);
-        } else {
-          Serial.println("Grado fuera de rango (0-180)");
-        } 
+        servo2.write(grado);
+        Serial.print("Servo 2 movido a: ");
+      } else if (id == "03") {
+        servo3.write(grado);
+        Serial.print("Servo 3 movido a: ");
+      } else if (id == "04") {
+        servo4.write(grado);
+        Serial.print("Servo 4 movido a: ");
+      } else {
+        Serial.println("ID de servo no válido.");
       }
-    } else if (hw == "mtr") {
-      if (id == "01") {
-        if (action == "001") {
-          digitalWrite(motorPin, HIGH);
-          Serial.println("Motor iniciado");
-        } else if (action == "000") {
-          digitalWrite(motorPin, LOW);
-          Serial.println("Motor detenido");
-        }        
-      } else if (id == "02") {
-      
-      }
-    } else if (hw == "led" && (id == "01")) {
-      if (id == "01") {
-        if (action == "001") {
-          digitalWrite(ledPin, HIGH);
-          Serial.println("LED iniciado");
-        } else if (action == "000") {
-          digitalWrite(ledPin, LOW);
-          Serial.println("LED detenido");
-        }        
-      }
+      Serial.println(grado);
     } else {
-      Serial.println("Comando no válido");
-    }
+      Serial.println("Grado fuera de rango (0-180)");
+    }      
+  } else if (hw == "mtr") {
+    if (action == "000") motorsStop();
+    else if (action == "001") motorsForward();
+    else if (action == "002") motorsBackward();
+    else if (action == "003") motorsLeft();
+    else if (action == "004") motorsRight();
+    else Serial.println("Acción de motor no válida.");
+  } else if (hw == "led" && id == "01") {
+    if (action == "001") digitalWrite(ledPin, HIGH);
+    else if (action == "000") digitalWrite(ledPin, LOW);
+    else Serial.println("Acción de LED no válida.");
+  } else {
+    Serial.println("Comando no válido");
   }
 }
 
@@ -99,24 +106,51 @@ void setup() {
   Serial.begin(115200);
 
   // Configuración de pines
-  pinMode(motorPin, OUTPUT);
   pinMode(ledPin, OUTPUT);
+
+  pinMode(motor1Pin1, OUTPUT);
+  pinMode(motor1Pin2, OUTPUT);
+  pinMode(motor1EnablePin, OUTPUT);
+  pinMode(motor2Pin1, OUTPUT);
+  pinMode(motor2Pin2, OUTPUT);
+  pinMode(motor2EnablePin, OUTPUT);
+
+  // configure LEDC PWM
+  ledcAttachChannel(motor1EnablePin, freq, resolution, motor1PwmChannel);
+  ledcAttachChannel(motor2EnablePin, freq, resolution, motor2PwmChannel);
+
+  ledcWrite(motor1EnablePin, dutyCycle);
+  ledcWrite(motor2EnablePin, dutyCycle);
+
+  digitalWrite(ledPin, LOW);
 
   servo1.setPeriodHertz(50);
   servo1.attach(servoPin1);
+  servo2.setPeriodHertz(50);
+  servo2.attach(servoPin2);
+  servo3.setPeriodHertz(50);
+  servo3.attach(servoPin3);
+  servo4.setPeriodHertz(50);
+  servo4.attach(servoPin4);
 
-  digitalWrite(motorPin, LOW);
-  digitalWrite(ledPin, LOW);
+  motorsStop();
 
   // Conexión a WiFi
   Serial.print("Conectando a WiFi...");
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  int timeout = 20; // 20 segundos de espera máxima
+  while (WiFi.status() != WL_CONNECTED && timeout > 0) {
     delay(1000);
     Serial.print(".");
+    timeout--;
   }
-  Serial.println("\nConexión establecida");
-  Serial.println("Dirección IP: " + WiFi.localIP().toString());
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConexión establecida");
+    Serial.println("Dirección IP: " + WiFi.localIP().toString());
+  } else {
+    Serial.println("\nNo se pudo conectar a WiFi.");
+  }
 
   // Iniciar el servidor WebSocket
   webSocket.begin();
@@ -126,11 +160,40 @@ void setup() {
 }
 
 void loop() {
-  if (listening) {
-    // Procesar mensajes WebSocket
-    webSocket.loop(); 
-  } else {
-     // Si no estamos escuchando, espera
-    delay(1000);
-  }
+  webSocket.loop();
+}
+
+void motorsStop() {
+  digitalWrite(motor1Pin1, LOW);
+  digitalWrite(motor1Pin2, LOW);
+  digitalWrite(motor2Pin1, LOW);
+  digitalWrite(motor2Pin2, LOW);
+}
+
+void motorsForward() {
+  digitalWrite(motor1Pin1, LOW);
+  digitalWrite(motor1Pin2, HIGH);
+  digitalWrite(motor2Pin1, LOW);
+  digitalWrite(motor2Pin2, HIGH);
+}
+
+void motorsBackward() {
+  digitalWrite(motor1Pin1, HIGH);
+  digitalWrite(motor1Pin2, LOW);
+  digitalWrite(motor2Pin1, HIGH);
+  digitalWrite(motor2Pin2, LOW);
+}
+
+void motorsLeft() {
+  digitalWrite(motor1Pin1, HIGH);
+  digitalWrite(motor1Pin2, LOW);
+  digitalWrite(motor2Pin1, LOW);
+  digitalWrite(motor2Pin2, HIGH);
+}
+
+void motorsRight() {
+  digitalWrite(motor1Pin1, LOW);
+  digitalWrite(motor1Pin2, HIGH);
+  digitalWrite(motor2Pin1, HIGH);
+  digitalWrite(motor2Pin2, LOW);
 }
